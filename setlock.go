@@ -98,12 +98,25 @@ func mstod(ms int64) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+var rng struct {
+	sync.Mutex
+	*rand.Rand
+	once sync.Once
+}
+
+func randomBytes(p []byte) {
+	rng.once.Do(func() {
+		rng.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	})
+	rng.Lock()
+	rng.Read(p)
+	rng.Unlock()
+}
 
 func randomToken() []byte {
 	const ntoken = 20
 	token := make([]byte, ntoken)
-	rng.Read(token)
+	randomBytes(token)
 	return token
 }
 

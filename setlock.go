@@ -152,3 +152,87 @@ func (l *Lock) Unlock(ctx context.Context) error {
 	l.token = nil
 	return nil
 }
+
+var extendScript = redis.NewScript(1, `
+	if redis.call("get", KEYS[1]) == ARGV[1]
+	then
+		local ttl = redis.call("pttl", KEYS[1]) + ARGV[2]
+		redis.call("set", KEYS[1], ARGV[1], "PX", ttl)
+		return 1
+	else
+		return 0
+	end`)
+
+// Extend extends lock l.
+func (l *Lock) Extend(ctx context.Context, d time.Duration) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// If there is no token, Lock is not called.
+	if l.token == nil {
+		return ErrNotHeld
+	}
+
+	conn, err := l.Pool.GetContext(ctx)
+	if err != nil {
+		return err
+	}
+	reply, err := redis.Int(extendScript.Do(conn, l.Key, l.token, dtoms(d)))
+	if err != nil {
+		return err
+	}
+	if reply != 1 {
+		return ErrNotHeld
+	}
+	return nil
+}
+
+// DoFunc is a function that is executed while
+// the associated lock automatically extended.
+type DoFunc func(ctx context.Context) error
+
+// Do acquires lock l and executes f and releases
+// afterwards. If lock cannot be acquired, ErrNotHeld
+// is returned. The context that is passed to f is
+// cancelled if the lock is released because of some
+// error condition.
+func (l *Lock) Do(ctx context.Context, f DoFunc) error {
+	return l.do(ctx, f, time.Minute)
+}
+
+func (l *Lock) do(ctx context.Context, f DoFunc, d time.Duration) error {
+	_, err := l.Lock(ctx, d)
+	if err != nil {
+		return err
+	}
+
+	errs := make(chan error, 1)
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		t := time.NewTicker(d * 4 / 5) // 80% of d
+		defer t.Stop()
+		for range t.C {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				err := l.Extend(ctx, d)
+				if err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	err = f(ctx)
+	cancel()
+	if err == nil {
+		select {
+		case err = <-errs:
+		default:
+		}
+	}
+	l.Unlock(ctx)
+	return err
+}

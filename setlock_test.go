@@ -9,7 +9,7 @@ import (
 	"github.com/gomodule/redigo/redis"
 )
 
-var redisAddr = flag.String("redis.addr", "localhost:6379", "Address for Redis to connect on during tests")
+var redisURL = flag.String("redis.url", "redis://localhost:6379/3", "URL for Redis to connect on during tests")
 
 const testingKey = "testing.lock"
 
@@ -32,7 +32,7 @@ func parseDuration(reply interface{}, err error) (time.Duration, error) {
 func resetRedis(t *testing.T) *redis.Pool {
 	p := &redis.Pool{
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", *redisAddr)
+			return redis.DialURL(*redisURL)
 		},
 		TestOnBorrow: func(c redis.Conn, t time.Time) error {
 			_, err := c.Do("PING")

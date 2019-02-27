@@ -149,6 +149,56 @@ func TestDo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// check lock l is unheld
+	err = l.Unlock(ctx)
+	if err != ErrNotHeld {
+		t.Errorf("got error %q, want %q", err, ErrNotHeld)
+	}
+}
+
+func TestDo_ExtendError(t *testing.T) {
+	// remove lock key from Redis
+	p := resetRedis(t)
+
+	ctx := context.Background()
+	l := &Lock{Key: testingKey, Pool: p}
+	f := func(ctx context.Context) error {
+		l.token = randomToken()
+		time.Sleep(time.Second)
+		return nil
+	}
+
+	// execute f while holding lock l
+	err := l.do(ctx, f, (time.Second / 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// check lock l is unheld
+	err = l.Unlock(ctx)
+	if err != ErrNotHeld {
+		t.Errorf("got error %q, want %q", err, ErrNotHeld)
+	}
+}
+
+func TestDo_Panic(t *testing.T) {
+	// remove lock key from Redis
+	p := resetRedis(t)
+
+	ctx := context.Background()
+	l := &Lock{Key: testingKey, Pool: p}
+	f := func(ctx context.Context) error {
+		time.Sleep(time.Second)
+		panic("panic happend")
+	}
+
+	// execute f while holding lock l
+	err := l.do(ctx, f, (time.Second / 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// check lock l is unheld
 	err = l.Unlock(ctx)
 	if err != ErrNotHeld {

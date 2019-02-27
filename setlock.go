@@ -200,39 +200,53 @@ func (l *Lock) Do(ctx context.Context, f DoFunc) error {
 	return l.do(ctx, f, time.Minute)
 }
 
+// TODO: add debug logging via environment variable or build tag
+
 func (l *Lock) do(ctx context.Context, f DoFunc, d time.Duration) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		if r := recover(); r != nil {
+			if r != ErrNotHeld {
+				l.Unlock(ctx)
+			}
+		}
+		cancel()
+	}()
+
 	_, err := l.Lock(ctx, d)
 	if err != nil {
 		return err
 	}
 
-	errs := make(chan error, 1)
-	ctx, cancel := context.WithCancel(ctx)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if r != ErrNotHeld {
+					l.Unlock(ctx)
+				}
+				cancel()
+			}
+		}()
+
 		t := time.NewTicker(d * 4 / 5) // 80% of d
 		defer t.Stop()
 		for range t.C {
 			select {
+			default:
+				if err := l.Extend(ctx, d); err != nil {
+					panic(err)
+				}
 			case <-ctx.Done():
 				return
-			default:
-				err := l.Extend(ctx, d)
-				if err != nil {
-					cancel()
-					return
-				}
 			}
 		}
 	}()
 
 	err = f(ctx)
-	cancel()
-	if err == nil {
-		select {
-		case err = <-errs:
-		default:
-		}
+	if ctx.Err() == context.Canceled {
+		return err
 	}
+
 	l.Unlock(ctx)
 	return err
 }

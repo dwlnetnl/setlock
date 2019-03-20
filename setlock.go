@@ -69,6 +69,7 @@ func (l *Lock) Lock(ctx context.Context, d time.Duration) (time.Duration, error)
 		l.token = randomToken()
 	}
 
+	defer conn.Close()
 	return parseLockReply(lockScript.Do(conn, l.Key, l.token, dtoms(d)))
 }
 
@@ -138,9 +139,11 @@ func (l *Lock) Unlock(ctx context.Context) error {
 		return err
 	}
 
+	defer conn.Close()
 	if l.token == nil {
 		l.token = randomToken()
 	}
+
 	reply, err := redis.Int(unlockScript.Do(conn, l.Key, l.token))
 	if err != nil {
 		return err
@@ -177,6 +180,8 @@ func (l *Lock) Extend(ctx context.Context, d time.Duration) error {
 	if err != nil {
 		return err
 	}
+
+	defer conn.Close()
 	reply, err := redis.Int(extendScript.Do(conn, l.Key, l.token, dtoms(d)))
 	if err != nil {
 		return err
@@ -184,6 +189,7 @@ func (l *Lock) Extend(ctx context.Context, d time.Duration) error {
 	if reply != 1 {
 		return ErrNotHeld
 	}
+
 	return nil
 }
 
